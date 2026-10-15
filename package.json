@@ -1,0 +1,19 @@
+{
+  "name": "job-finder-extreme",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A private, local software engineering job finder. No database or API keys.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node server.mjs --open",
+    "dev": "node --watch server.mjs",
+    "test": "node --test",
+    "check": "node --check server.mjs && node --check lib/jobs.mjs && node --check lib/sources.mjs && node --check lib/discovery.mjs && node --check lib/linkedin.mjs && node --check lib/indeed.mjs && node --check lib/boards.mjs && node --check public/app.mjs"
+  },
+  "dependencies": {
+    "ts-jobspy": "3.0.1"
+  }
+}

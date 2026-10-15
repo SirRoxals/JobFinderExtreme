@@ -1,0 +1,22 @@
+node_modules/
+coverage/
+.DS_Store
+*.log
+.env
+.env.*
+!.env.example
+# Keep machine-specific settings, credentials, exports and captures out of Git.
+jobs.local.json
+*.local.json
+*.pem
+*.key
+*.p12
+*.pfx
+exports/
+screenshots/
+artifacts/
+playwright-report/
+test-results/
+software-jobs-*.csv
+.vscode/
+.idea/
