@@ -46,7 +46,7 @@ test('online discovery paginates, includes unlisted companies, rejects invalid r
   assert.equal(filterJobs(result.jobs, { experienceYears: '4', includeUnknownExperience: true }, now).length, 2);
   assert.ok(calls.some(url => new URL(url).searchParams.get('pageToken') === 'opaque-page-two'));
   assert.ok(progress.some(event => event.pages === 2));
-  assert.equal(result.sources.length, 10);
+  assert.equal(result.sources.length, 12);
   const before = calls.length;
   await service.getJobs({ role: 'Software Engineer', days: '30' });
   assert.equal(calls.length, before);

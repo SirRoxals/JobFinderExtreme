@@ -27,6 +27,45 @@ const storedSaved = read(STORAGE.saved, []);
 let saved = (Array.isArray(storedSaved) ? storedSaved : []).filter((job) => job && ['id', 'title', 'company', 'location', 'description', 'applyUrl', 'sourceId', 'sourceName'].every((key) => typeof job[key] === 'string') && safeUrl(job.applyUrl)).slice(0, 200);
 let jobs = [], sources = [], visible = [], page = 1, view = 'discover', loading = false, loadFailed = false, checkedAt = null, detailJob = null, toastTimer;
 let searchInfo = null, requestController, requestNumber = 0, autoSearchTimer, lastSearchSignature = '', progressState = { completed: 0, total: 1 };
+let connection = { connected: false, requestLimit: 20, quota: null, searching: false }, connectionBusy = false, lastJSearchNote = '';
+
+function renderConnection() {
+  const allowance = connection.quota;
+  const quotaText = allowance ? `${allowance.remaining.toLocaleString()} / ${allowance.limit.toLocaleString()} credits remaining${allowance.resetAt ? ` · Resets ${new Date(allowance.resetAt).toLocaleDateString()}` : ''}` : '';
+  $('#connection-summary').textContent = connection.connected ? `${quotaText} · Up to ${connection.requestLimit} credits per search.${lastJSearchNote ? ` ${lastJSearchNote}` : ' Runs only when you press Search with JSearch.'}` : 'Connect JSearch for Google for Jobs coverage across more boards.';
+  $('#connection-settings').textContent = connection.connected ? 'JSearch settings' : 'Connect JSearch';
+  $('#jsearch-button').hidden = !connection.connected;
+  $('#jsearch-button').disabled = loading || connectionBusy || connection.searching || (allowance && (!allowance.active || allowance.remaining < 1));
+  $('#connection-quota').textContent = connection.connected ? `${allowance?.plan || 'JSearch'} · ${quotaText}. Allowance is checked before new requests.` : 'Your remaining allowance will appear after connecting.';
+  $('#disconnect-jsearch').hidden = !connection.connected;
+  $('#disconnect-jsearch').disabled = connectionBusy;
+  $('#connect-jsearch').disabled = connectionBusy || connection.searching;
+  $('#connect-jsearch').textContent = connectionBusy ? 'Connecting…' : connection.connected ? 'Save settings' : 'Connect';
+  $('#jsearch-key').required = !connection.connected;
+  $('#jsearch-key').placeholder = connection.connected ? 'Paste a key only to replace your connection' : 'Paste your OpenWeb Ninja API key';
+}
+
+async function refreshConnection() {
+  try {
+    const response = await fetch('/api/jsearch/connection');
+    if (!response.ok) return;
+    connection = await response.json(); renderConnection();
+  } catch { /* Public searches remain available when settings cannot be read. */ }
+}
+
+async function updateConnection(event) {
+  event.preventDefault();
+  connectionBusy = true; $('#connection-error').hidden = true; renderConnection();
+  const input = $('#jsearch-key');
+  try {
+    const response = await fetch('/api/jsearch/connection', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ apiKey: input.value.trim(), requestLimit: Number($('#jsearch-limit').value) }) });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Could not connect JSearch.');
+    connection = data; lastJSearchNote = ''; toast('JSearch is ready. Press Search with JSearch to use it.');
+    $('#connection-dialog').close();
+  } catch (error) { $('#connection-error').textContent = error.message; $('#connection-error').hidden = false; await refreshConnection(); }
+  finally { input.value = ''; connectionBusy = false; renderConnection(); }
+}
 
 function toast(message) {
   $('#toast').textContent = message;
@@ -121,7 +160,7 @@ function card(job) {
   const fresh = job.postedAt && Date.now() - Date.parse(job.postedAt) < 86400000;
   const location = job.location.length > 65 ? `${job.location.slice(0, 62)}…` : job.location;
   return `<article class="job-card">
-    <div class="card-top"><div class="company-avatar avatar-${color}" aria-hidden="true">${esc(initials)}</div><div class="card-identity"><p class="card-company">${esc(job.company)}<span class="source-tag">${esc(job.sourceName)}</span></p><h3 class="job-heading"><button class="job-title" data-detail="${esc(job.id)}">${esc(job.title)}</button></h3></div>${savedButton(job)}</div>
+    <div class="card-top"><div class="company-avatar avatar-${color}" aria-hidden="true">${esc(initials)}</div><div class="card-identity"><p class="card-company">${esc(job.company)}<span class="source-tag">${esc(job.sourceName)}</span></p><h3 class="job-heading"><a class="job-title" href="${href(job.applyUrl)}" target="_blank" rel="noopener noreferrer" data-detail="${esc(job.id)}">${esc(job.title)}</a></h3></div>${savedButton(job)}</div>
     <div class="card-time" title="${esc(job.postedDateLabel || 'Posted')}: ${esc(dateLabel(job.postedAt))}">${icon('clock')}${esc(ageLabel(job.postedAt))}${job.postedDateLabel && job.postedDateLabel !== 'Posted' ? ` · ${esc(job.postedDateLabel.toLowerCase())}` : ''}${fresh ? '<span class="fresh-tag">NEW</span>' : ''}</div>
     <div class="card-meta"><span title="${esc(job.location)}">${icon('pin')}${esc(location)}</span><span>${icon('remote')}Fully remote</span><span class="salary-meta"><span class="meta-icon" aria-hidden="true">$</span>${esc(salaryLabel(job.salary))}</span></div>
     <p class="card-description">${esc(job.description.slice(0, 380) || 'Open the listing for the full job description.')}</p>
@@ -134,7 +173,7 @@ function chips() {
   if (filters.role) items.push(['role', filters.role]);
   if (filters.roleFocus) items.push(['roleFocus', $('#roleFocus').selectedOptions[0]?.textContent || filters.roleFocus]);
   if (filters.location) items.push(['location', filters.location]);
-  if (filters.days) items.push(['days', filters.days === 'custom' ? `${filters.dateFrom || 'Any start date'} → ${filters.dateTo || 'Any end date'}` : filters.days === '1' ? 'Past 24 hours' : `Past ${filters.days} days`]);
+  if (filters.days) items.push(['days', filters.days === 'custom' ? `${filters.dateFrom || 'Any start date'} → ${filters.dateTo || 'Any end date'}` : filters.days === '0.5' ? 'Past 12 hours' : filters.days === '1' ? 'Past 24 hours' : `Past ${filters.days} days`]);
   if (filters.experienceYears !== '') items.push(['experienceYears', `${filters.experienceYears} years experience`]);
   if (filters.minSalary) items.push(['minSalary', `$${Number(filters.minSalary).toLocaleString()}+ USD / yr`]);
   if (filters.salaryOnly) items.push(['salaryOnly', 'Annual USD pay disclosed']);
@@ -143,6 +182,7 @@ function chips() {
 }
 
 function render() {
+  renderConnection();
   chips();
   renderBoards();
   const all = view === 'saved' ? saved : jobs;
@@ -150,18 +190,18 @@ function render() {
   $('#saved-count').textContent = saved.length;
   $('#result-count').textContent = visible.length;
   $('#stat-total').textContent = loading && !jobs.length ? '—' : visible.length;
-  $('#stat-today').textContent = loading && !jobs.length ? '—' : visible.filter((job) => job.postedAt && Date.now() - Date.parse(job.postedAt) < 86400000).length;
+  $('#stat-today').textContent = loading && !jobs.length ? '—' : filterJobs(all, { days: '1' }).length;
   $('#stat-salary').textContent = loading && !jobs.length ? '—' : visible.filter((job) => job.salary?.text || job.salary?.min || job.salary?.max).length;
   $('#stat-sources').textContent = new Set(visible.map(job => job.company.toLowerCase())).size || (loading ? '—' : '0');
-  $('#discovery-summary').textContent = jobs.length ? `${jobs.length.toLocaleString()} US remote software roles in your search pool · ${new Set(jobs.map(job => job.company.toLowerCase())).size.toLocaleString()} companies${searchInfo?.origins?.length ? ` · ${searchInfo.origins.length} underlying job sources` : ''}${loading ? ' · Still searching' : ''}` : 'Searching across company career sites and job boards. No company list needed.';
+  $('#discovery-summary').textContent = jobs.length ? `${filterJobs(jobs, { days: filters.days, dateFrom: filters.dateFrom, dateTo: filters.dateTo }).length.toLocaleString()} US remote software roles in this posting window · ${visible.length.toLocaleString()} match your preferences${searchInfo?.origins?.length ? ` · ${searchInfo.origins.length} underlying job sources` : ''}${loading ? ' · Still searching' : ''}` : 'Searching across company career sites and job boards. No company list needed.';
   $('#experience-summary').hidden = filters.experienceYears === '';
   if (filters.experienceYears !== '') {
     const unknown = visible.filter(job => experienceRequirementFor(job).minYears === null).length;
-    $('#experience-summary').textContent = `${visible.length - unknown} have stated experience requirements you meet · ${unknown} have unstated years to review.${Number(filters.experienceYears) < 5 ? ' Senior and higher-level titles are excluded.' : ''}`;
+    $('#experience-summary').textContent = `${visible.length - unknown} have stated experience requirements you meet · ${unknown} have unstated years to review.${Number(filters.experienceYears) < 5 ? ' Senior and higher-level titles are excluded.' : ''}${filters.keywords ? ` ${filterJobs(all, { ...filters, keywords: '' }).length} pass your other filters before keywords.` : ''}`;
   }
   $('#deeper-search').hidden = !searchInfo?.limited || loading;
   $('#deeper-button').hidden = filters.depth === 'deep';
-  $('#deeper-message').textContent = filters.depth === 'deep' ? 'A source reached its page or time limit. Use a narrower role or posting window to search that slice further. See coverage for each source’s limit.' : 'The broad catalogue already reads up to 10,000 candidates. Deep search reads further into the supplementary indexes and LinkedIn.';
+  $('#deeper-message').textContent = (filters.depth === 'deep' ? 'A source reached its page or time limit. Use a narrower role or posting window to search that slice further. See coverage for each source’s limit.' : 'The broad catalogue already reads up to 10,000 candidates. Deep search reads further into the supplementary public indexes.') + (sources.some(source => source.id === 'jsearch' && source.truncated) ? ' Change the JSearch budget in JSearch settings, then press Search with JSearch.' : '');
   $('#results-title').textContent = view === 'saved' ? 'Saved for your next move' : 'Your next opportunity';
   for (const button of document.querySelectorAll('[data-view]')) button.classList.toggle('active', button.dataset.view === view);
   $('#discover-tab').classList.toggle('active', view === 'discover');
@@ -189,13 +229,14 @@ function render() {
   $('#next-button').disabled = page >= pages;
 }
 
-async function loadJobs() {
+async function loadJobs({ useJSearch = false } = {}) {
   clearTimeout(autoSearchTimer);
   requestController?.abort();
   requestController = new AbortController();
   const number = ++requestNumber;
   let receivedBatch = false;
   const params = onlineParams(); lastSearchSignature = params.toString();
+  if (useJSearch === true) params.set('jsearch', '1');
   loading = true; $('#refresh-button').disabled = true;
   $('#search-progress').hidden = false;
   progressState = { completed: 0, total: 1 };
@@ -203,7 +244,7 @@ async function loadJobs() {
   $('#progress-detail').textContent = 'Requesting software development roles in the United States';
   $('#progress-bar').value = 0; render();
   try {
-    const response = await fetch(`/api/jobs?${params}`, { headers: { Accept: 'application/x-ndjson' }, signal: AbortSignal.any([requestController.signal, AbortSignal.timeout(210000)]) });
+    const response = await fetch(`/api/jobs?${params}`, { headers: { Accept: 'application/x-ndjson', ...(useJSearch === true ? { 'X-JobFinder-Search': '1' } : {}) }, signal: AbortSignal.any([requestController.signal, AbortSignal.timeout(210000)]) });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     let data;
     if (response.headers.get('content-type')?.includes('application/x-ndjson')) {
@@ -221,7 +262,7 @@ async function loadJobs() {
         else if (event.type === 'progress') {
           progressState = { ...progressState, ...event };
           $('#progress-message').textContent = event.source || 'Searching…';
-          $('#progress-detail').textContent = `${progressState.completed}/${progressState.total} searches complete${event.query ? ` · ${event.query}` : ''}${event.scanned ? ` · ${event.scanned.toLocaleString()}${event.available ? ` / ${event.available.toLocaleString()}` : ''} candidates read` : event.pages ? ` · ${event.pages} pages read` : ''}${jobs.length ? ` · ${jobs.length.toLocaleString()} US remote software roles loaded` : ''}`;
+          $('#progress-detail').textContent = `${progressState.completed}/${progressState.total} searches complete${event.query ? ` · ${event.query}` : ''}${event.scanned ? ` · ${event.scanned.toLocaleString()}${event.available ? ` / ${event.available.toLocaleString()}` : ''} candidates read` : event.pages ? ` · ${event.pages} pages read` : ''}${event.requestsUsed != null ? ` · ${event.requestsUsed}/${event.requestLimit} JSearch credits used` : ''}${jobs.length ? ` · ${jobs.length.toLocaleString()} US remote software roles loaded` : ''}`;
           $('#progress-bar').max = progressState.total; $('#progress-bar').value = progressState.completed;
         }
       };
@@ -236,6 +277,8 @@ async function loadJobs() {
     } else data = await response.json();
     if (number !== requestNumber) return;
     jobs = data.jobs; sources = data.sources; checkedAt = data.checkedAt; searchInfo = data.search || null; loadFailed = false;
+    const paidSource = sources.find(source => source.id === 'jsearch');
+    if (paidSource) lastJSearchNote = `Last JSearch: ${paidSource.requestsUsed || 0} credits used${paidSource.error ? ' · Some queries could not finish; see Search coverage.' : paidSource.truncated ? ' · Request or source limit reached.' : '.'}`;
     const failures = sources.filter((source) => source.error);
     $('#feed-warning').hidden = !failures.length;
     $('#feed-warning').textContent = failures.length ? `Some searches could not finish on ${failures.map(source => source.name).join(', ')}. Available results are shown. Check search coverage for errors and limits.` : '';
@@ -244,7 +287,7 @@ async function loadJobs() {
     loadFailed = true; $('#feed-warning').hidden = false;
     $('#feed-warning').textContent = 'The online search could not finish. Keep the local server running, check your connection, and retry. Previously loaded results remain visible.';
   } finally {
-    if (number === requestNumber) { loading = false; $('#refresh-button').disabled = false; $('#search-progress').hidden = true; page = 1; render(); renderSources(); }
+    if (number === requestNumber) { loading = false; $('#refresh-button').disabled = false; $('#search-progress').hidden = true; page = 1; render(); renderSources(); await refreshConnection(); }
   }
 }
 
@@ -268,7 +311,10 @@ function renderDetail(job) {
 }
 
 function renderSources() {
-  $('#source-list').innerHTML = sources.length ? sources.map(source => `<div class="source-row"><div><strong>${esc(source.name)}</strong><a href="${href(source.url)}" target="_blank" rel="noopener noreferrer">Visit ↗</a><p>${esc(source.note)}</p><span class="source-status${source.error ? ' error' : ''}">${source.count.toLocaleString()} US remote software roles · ${(source.scanned || 0).toLocaleString()} candidates read${source.available != null ? ` / ${source.available.toLocaleString()} reported` : ''} · ${source.pages == null ? 'page count unavailable' : `${source.pages} pages`}${source.truncated ? ' · Source limit reached' : ''}${source.error ? ` · ${esc(source.error)}` : ''}${source.stale ? ' · Cached results may be stale' : ''}</span>${source.origins?.length ? `<details class="origin-details"><summary>${source.origins.length} underlying sources in this search</summary><p>${source.origins.map(esc).join(' · ')}</p></details>` : ''}${source.queries?.length ? `<p>Queries: ${source.queries.map(esc).join(' · ')}</p>` : ''}<p>Loaded: ${esc(dateLabel(source.fetchedAt))} · Next refresh: ${esc(dateLabel(source.nextCheckAt))}</p></div></div>`).join('') : '<p class="dialog-intro">Coverage appears after the first online search.</p>';
+  $('#source-list').innerHTML = sources.length ? sources.map(source => {
+    const credits = source.requestsUsed == null ? '' : ` · ${source.requestsUsed}/${source.requestLimit} JSearch credits used${source.cacheHit ? ' · Cached search' : ''}`;
+    return `<div class="source-row"><div><strong>${esc(source.name)}</strong><a href="${href(source.url)}" target="_blank" rel="noopener noreferrer">Visit ↗</a><p>${esc(source.note)}</p><span class="source-status${source.error ? ' error' : ''}">${source.count.toLocaleString()} US remote software roles · ${(source.scanned || 0).toLocaleString()} candidates read${source.available != null ? ` / ${source.available.toLocaleString()} reported` : ''} · ${source.pages == null ? 'page count unavailable' : `${source.pages} pages`}${credits}${source.truncated ? ' · Source limit reached' : ''}${source.error ? ` · ${esc(source.error)}` : ''}${source.stale ? ' · Cached results may be stale' : ''}</span>${source.origins?.length ? `<details class="origin-details"><summary>${source.origins.length} underlying sources in this search</summary><p>${source.origins.map(esc).join(' · ')}</p></details>` : ''}${source.queries?.length ? `<p>Queries: ${source.queries.map(esc).join(' · ')}</p>` : ''}<p>Loaded: ${esc(dateLabel(source.fetchedAt))} · Next refresh: ${esc(dateLabel(source.nextCheckAt))}</p></div></div>`;
+  }).join('') : '<p class="dialog-intro">Coverage appears after the first online search.</p>';
 }
 
 function renderBoards() {
@@ -322,6 +368,11 @@ document.addEventListener('click', (event) => {
   if (keyword) { $('#keywords').value = [...new Set([...parseKeywords($('#keywords').value), keyword.dataset.addKeyword])].join(', '); readForm(); return; }
   const target = event.target.closest('[data-detail], [data-save], [data-empty-action]');
   if (!target) return;
+  if (target.matches('a[data-detail]')) {
+    // Let the browser handle middle/modified clicks and the link context menu.
+    if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+  }
   if (target.dataset.emptyAction) {
     if (target.dataset.emptyAction === 'retry') loadJobs();
     else if (target.dataset.emptyAction === 'discover') switchView('discover');
@@ -347,4 +398,19 @@ document.body.dataset.density = $('#density').value;
 $('#density').addEventListener('change', () => { document.body.dataset.density = $('#density').value; persist('jfe.display.v1', $('#density').value); });
 
 writeForm();
+$('#connection-settings').addEventListener('click', async () => { await refreshConnection(); $('#jsearch-limit').value = String(connection.requestLimit); $('#connection-error').hidden = true; $('#connection-dialog').showModal(); });
+$('#connection-form').addEventListener('submit', updateConnection);
+$('#close-connection').addEventListener('click', () => $('#connection-dialog').close());
+$('#connection-dialog').addEventListener('close', () => { $('#jsearch-key').value = ''; });
+$('#disconnect-jsearch').addEventListener('click', async () => {
+  connectionBusy = true; renderConnection();
+  try {
+    const response = await fetch('/api/jsearch/connection', { method: 'DELETE' });
+    if (!response.ok) throw new Error();
+    connection = await response.json(); lastJSearchNote = ''; $('#connection-dialog').close(); toast('JSearch disconnected. The key has been removed from server memory.');
+  } catch { $('#connection-error').textContent = 'Could not disconnect. Stop the local server to clear its key.'; $('#connection-error').hidden = false; }
+  finally { connectionBusy = false; renderConnection(); }
+});
+$('#jsearch-button').addEventListener('click', () => { if (!form.checkValidity()) { form.reportValidity(); return; } clearTimeout(debounce); readForm(); loadJobs({ useJSearch: true }); });
+refreshConnection();
 loadJobs();

@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "A private, local software engineering job finder. No database or API keys.",
+  "description": "A local US remote software engineering job finder with optional JSearch coverage. No database.",
   "engines": {
     "node": ">=22"
   },
@@ -11,9 +11,10 @@
     "start": "node server.mjs --open",
     "dev": "node --watch server.mjs",
     "test": "node --test",
-    "check": "node --check server.mjs && node --check lib/jobs.mjs && node --check lib/sources.mjs && node --check lib/discovery.mjs && node --check lib/linkedin.mjs && node --check lib/indeed.mjs && node --check lib/boards.mjs && node --check public/app.mjs"
+    "check": "node --check server.mjs && node --check lib/jobs.mjs && node --check lib/sources.mjs && node --check lib/discovery.mjs && node --check lib/linkedin.mjs && node --check lib/indeed.mjs && node --check lib/jobspy-client.mjs && node --check lib/dice.mjs && node --check lib/builtin.mjs && node --check lib/jsearch.mjs && node --check lib/boards.mjs && node --check public/app.mjs"
   },
   "dependencies": {
+    "cheerio": "1.2.0",
     "ts-jobspy": "3.0.1"
   }
 }
